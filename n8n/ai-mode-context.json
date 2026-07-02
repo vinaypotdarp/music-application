@@ -1,0 +1,95 @@
+{
+  "name": "AI Mode - Context",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-mode-context",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-context",
+      "name": "Webhook - Context",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ? $json.body : $json;\nconst now = new Date();\nconst hour = (body.hourOverride !== undefined && body.hourOverride !== null) ? body.hourOverride : now.getHours();\nreturn [{\n  json: {\n    originLat: body.origin && body.origin.lat,\n    originLng: body.origin && body.origin.lng,\n    destLat: body.destination && body.destination.lat,\n    destLng: body.destination && body.destination.lng,\n    hour: hour,\n    timeOfDayOverride: body.timeOfDayOverride || null,\n    routeType: body.routeType || null,\n    isTouristCity: Boolean(body.isTouristCity),\n    hasDestination: Boolean(body.destination),\n    destinationLabel: body.destinationLabel || null,\n    originLabel: body.originLabel || null\n  }\n}];"
+      },
+      "id": "node-prepare",
+      "name": "Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [20, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.open-meteo.com/v1/forecast",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "latitude", "value": "={{ $json.destLat || $json.originLat }}" },
+            { "name": "longitude", "value": "={{ $json.destLng || $json.originLng }}" },
+            { "name": "current", "value": "temperature_2m,precipitation,weather_code" },
+            { "name": "timezone", "value": "auto" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-get-weather",
+      "name": "Get Weather",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 0],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://router.project-osrm.org/route/v1/driving/{{ $('Prepare').item.json.originLng }},{{ $('Prepare').item.json.originLat }};{{ $('Prepare').item.json.destLng }},{{ $('Prepare').item.json.destLat }}?overview=false",
+        "options": {}
+      },
+      "id": "node-get-route",
+      "name": "Get Route",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 0],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const prep = $('Prepare').item.json;\n\nlet weather = { isRaining: false, description: 'Unknown', tempC: null };\ntry {\n  const w = $('Get Weather').item.json;\n  const code = w.current ? w.current.weather_code : null;\n  const rainCodes = [51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,99];\n  weather = {\n    isRaining: rainCodes.indexOf(code) !== -1,\n    description: rainCodes.indexOf(code) !== -1 ? 'Rain' : 'Clear',\n    tempC: w.current ? w.current.temperature_2m : null\n  };\n} catch (e) {}\n\nlet route = { etaMinutes: null, etaSeconds: null, trafficLevel: 'unknown', source: 'none' };\ntry {\n  const r = $('Get Route').item.json;\n  const dur = (r.routes && r.routes[0]) ? r.routes[0].duration : null;\n  if (dur) {\n    route = {\n      etaMinutes: Math.round(dur / 60),\n      etaSeconds: Math.round(dur),\n      trafficLevel: 'estimated (OSRM has no live traffic feed)',\n      source: 'live-osrm'\n    };\n  }\n} catch (e) {}\n\nfunction timeOfDay(hour, override) {\n  if (override) return override;\n  if (hour >= 5 && hour < 11) return 'morning';\n  if (hour >= 11 && hour < 17) return 'afternoon';\n  if (hour >= 17 && hour < 21) return 'evening';\n  return 'late_night';\n}\nconst tod = timeOfDay(prep.hour, prep.timeOfDayOverride);\n\nconst dest = (prep.destinationLabel || '').toLowerCase();\nconst origin = (prep.originLabel || '').toLowerCase();\nconst isGym = /gym|fitness|workout/.test(dest);\nconst isHome = /home/.test(dest);\n\nlet scenario;\nif (prep.routeType === 'fitness_outbound' || (isGym && tod !== 'morning')) {\n  scenario = { id: 'fitness_to_gym', label: 'Fitness Loop - To Gym', rationale: 'High-BPM push before your workout.', moodTags: ['gym','high-octane','motivational'], bpmRange: [140,170] };\n} else if (prep.routeType === 'fitness_return' || (isHome && /gym/.test(origin))) {\n  scenario = { id: 'fitness_from_gym', label: 'Fitness Loop - Cool Down', rationale: 'Downtempo accomplishment mix to cool down.', moodTags: ['gym','cool-down','accomplishment'], bpmRange: [80,100] };\n} else if (prep.isTouristCity || prep.routeType === 'tourist') {\n  scenario = { id: 'tourist_mode', label: 'Tourist Mode', rationale: 'Vacation detected - travel and regional vibes.', moodTags: ['travel','regional','roadtrip'], bpmRange: [95,120] };\n} else if (tod === 'late_night' && (!prep.hasDestination || prep.routeType === 'leisure_undetermined')) {\n  if (weather.isRaining) {\n    scenario = { id: 'night_drive_rain', label: 'Rainy Night Drive', rationale: 'Rain shifted the late-night mix to melancholic.', moodTags: ['night','melancholic','drive','rain'], bpmRange: [80,105] };\n  } else {\n    scenario = { id: 'night_drive', label: 'Casual Night Drive', rationale: 'No fixed destination this late - ambient drive mix.', moodTags: ['night','ambient','drive'], bpmRange: [85,105] };\n  }\n} else if (weather.isRaining && tod === 'evening') {\n  scenario = { id: 'rainy_wind_down', label: 'Rainy Wind-Down', rationale: 'Post-work social trip in the rain.', moodTags: ['rain','cozy','wind-down','romantic'], bpmRange: [70,95] };\n} else if (tod === 'morning' && prep.hasDestination) {\n  scenario = { id: 'morning_rush', label: 'Morning Focus Mix', rationale: 'Commute detected - time-capped focus mix.', moodTags: ['morning','focus','upbeat','motivational'], bpmRange: [110,128] };\n} else {\n  scenario = { id: 'adaptive_mix', label: 'Adaptive Mix', rationale: 'No strong scenario match - balanced mix.', moodTags: ['morning','night','travel'], bpmRange: [90,120] };\n}\n\nconst catalog = [\n  {id:'m1',title:'Skyline Drive',artist:'Neon Circuit',dur:198,tags:['morning','focus','upbeat']},\n  {id:'m2',title:'First Light',artist:'Aurora Kade',dur:210,tags:['morning','focus','motivational']},\n  {id:'m3',title:'Green Signal',artist:'Motive',dur:175,tags:['morning','commute','upbeat']},\n  {id:'r1',title:'Windowpane',artist:'Soft Static',dur:240,tags:['rain','cozy','wind-down']},\n  {id:'r2',title:'Petrichor',artist:'Halide',dur:225,tags:['rain','atmospheric','wind-down']},\n  {id:'r3',title:'Slow City Lights',artist:'June Marlowe',dur:250,tags:['rain','romantic','cozy']},\n  {id:'g1',title:'Redline',artist:'Voltage District',dur:195,tags:['gym','high-octane','motivational']},\n  {id:'g2',title:'Iron Pulse',artist:'Kilowatt',dur:202,tags:['gym','high-octane','aggressive']},\n  {id:'g3',title:'Overdrive',artist:'Voltage District',dur:180,tags:['gym','high-octane','motivational']},\n  {id:'c1',title:'Cool Down Room',artist:'Delta Fields',dur:220,tags:['gym','cool-down','accomplishment']},\n  {id:'c2',title:'Well Earned',artist:'June Marlowe',dur:215,tags:['gym','cool-down','accomplishment']},\n  {id:'c3',title:'Steady Now',artist:'Halide',dur:200,tags:['gym','cool-down','accomplishment']},\n  {id:'n1',title:'Midnight Loop',artist:'Halide',dur:260,tags:['night','ambient','drive']},\n  {id:'n2',title:'Empty Highway',artist:'Aurora Kade',dur:245,tags:['night','lo-fi','drive']},\n  {id:'n3',title:'Streetlight Static',artist:'Soft Static',dur:230,tags:['night','melancholic','drive','rain']},\n  {id:'t1',title:'Pink City Roads',artist:'Marigold Ensemble',dur:215,tags:['travel','regional','roadtrip']},\n  {id:'t2',title:'Bazaar Wind',artist:'Marigold Ensemble',dur:195,tags:['travel','regional','roadtrip']},\n  {id:'t3',title:'Fort Road',artist:'Kite & Compass',dur:205,tags:['travel','roadtrip']}\n];\n\nconst wanted = scenario.moodTags;\nconst scored = catalog.map(function(t) {\n  let overlap = 0;\n  for (let i = 0; i < t.tags.length; i++) { if (wanted.indexOf(t.tags[i]) !== -1) overlap++; }\n  return { t: t, overlap: overlap };\n});\nscored.sort(function(a,b){ return b.overlap - a.overlap; });\nconst candidates = scored.filter(function(s){ return s.overlap > 0; }).map(function(s){ return s.t; });\nconst pool = candidates.length > 0 ? candidates : catalog.slice(0, 6);\n\nconst etaSeconds = route.etaSeconds;\nlet queue = [];\nlet elapsed = 0;\nlet cleanCut = null;\n\nif (!etaSeconds) {\n  queue = pool.slice(0, 6);\n  elapsed = queue.reduce(function(a,t){ return a + t.dur; }, 0);\n} else {\n  const budget = Math.max(0, etaSeconds - 20);\n  const recent = [];\n  for (let i = 0; i < pool.length; i++) {\n    const track = pool[i];\n    if (elapsed + track.dur > budget) continue;\n    if (recent.length > 0 && recent[recent.length - 1] === track.artist) continue;\n    queue.push(track);\n    recent.push(track.artist);\n    elapsed += track.dur;\n    if (budget - elapsed < 30) break;\n  }\n  const remaining = etaSeconds - elapsed;\n  const used = {};\n  for (let i = 0; i < queue.length; i++) { used[queue[i].id] = true; }\n  const leftover = pool.filter(function(t){ return !used[t.id]; });\n  if (remaining > 5 && leftover.length > 0) {\n    const fit = leftover.filter(function(t){ return t.dur <= remaining; })[0];\n    if (fit) {\n      queue.push(fit);\n      elapsed += fit.dur;\n      cleanCut = { trackId: fit.id, fullDurationSec: fit.dur, playSeconds: fit.dur, trimmed: false, boundaryType: 'natural-end' };\n    } else {\n      const next = leftover[0];\n      const playSeconds = Math.max(10, Math.min(next.dur, remaining));\n      queue.push(next);\n      elapsed += playSeconds;\n      cleanCut = { trackId: next.id, fullDurationSec: next.dur, playSeconds: playSeconds, trimmed: true, boundaryType: 'faded-outro' };\n    }\n  }\n}\n\nconst formattedQueue = queue.map(function(t) {\n  return { id: t.id, title: t.title, artist: t.artist, durationSec: t.dur, source: 'n8n-mock' };\n});\n\nreturn [{\n  json: {\n    context: { timeOfDay: tod, hour: prep.hour, route: route, weather: weather },\n    scenario: scenario,\n    queue: {\n      queue: formattedQueue,\n      totalDurationSec: elapsed,\n      capped: Boolean(etaSeconds),\n      etaSeconds: etaSeconds,\n      cleanCut: cleanCut\n    }\n  }\n}];"
+      },
+      "id": "node-classify",
+      "name": "Classify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "node-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 0]
+    }
+  ],
+  "connections": {
+    "Webhook - Context": { "main": [[ { "node": "Prepare", "type": "main", "index": 0 } ]] },
+    "Prepare": { "main": [[ { "node": "Get Weather", "type": "main", "index": 0 } ]] },
+    "Get Weather": { "main": [[ { "node": "Get Route", "type": "main", "index": 0 } ]] },
+    "Get Route": { "main": [[ { "node": "Classify", "type": "main", "index": 0 } ]] },
+    "Classify": { "main": [[ { "node": "Respond to Webhook", "type": "main", "index": 0 } ]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}

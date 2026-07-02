@@ -1,0 +1,100 @@
+{
+  "name": "AI Mode - Assistant Command",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-mode-assistant",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-assistant",
+      "name": "Webhook - Assistant",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [-200, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ? $json.body : $json;\nconst text = (body.transcript || '').trim();\n\nconst destMatch = /going to ([^,.]+)/i.exec(text);\nconst destination = destMatch ? destMatch[1].trim() : null;\n\nconst etaMatch = /(\\d+)[- ]?minute/i.exec(text);\nconst spokenEtaMinutes = etaMatch ? parseInt(etaMatch[1], 10) : null;\n\nconst playMatch = /play (?:songs? by |some )?(.+)$/i.exec(text);\nlet artists = [];\nif (playMatch) {\n  artists = playMatch[1]\n    .replace(/\\band\\b/gi, ',')\n    .split(',')\n    .map(function(a){ return a.trim().replace(/[.!?]+$/, ''); })\n    .filter(function(a){ return a.length > 0; });\n}\n\nreturn [{\n  json: {\n    transcript: text,\n    destination: destination,\n    spokenEtaMinutes: spokenEtaMinutes,\n    artists: artists,\n    originLat: body.lat,\n    originLng: body.lng\n  }\n}];"
+      },
+      "id": "node-parse",
+      "name": "Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [20, 0]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://nominatim.openstreetmap.org/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ $json.destination }}" },
+            { "name": "format", "value": "json" },
+            { "name": "limit", "value": "1" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "User-Agent", "value": "ai-mode-prototype/1.0 (contact: jshashwat38@gmail.com)" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-geocode",
+      "name": "Geocode Destination",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 0],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://router.project-osrm.org/route/v1/driving/{{ $('Parse').item.json.originLng }},{{ $('Parse').item.json.originLat }};{{ $json[0] ? $json[0].lon : $('Parse').item.json.originLng }},{{ $json[0] ? $json[0].lat : $('Parse').item.json.originLat }}?overview=false",
+        "options": {}
+      },
+      "id": "node-get-route",
+      "name": "Get Route",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 0],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const parsed = $('Parse').item.json;\n\nlet etaSeconds = null;\nlet etaSource = 'spoken-fallback';\ntry {\n  const geo = $('Geocode Destination').item.json;\n  const route = $('Get Route').item.json;\n  const hasGeo = Array.isArray(geo) && geo.length > 0;\n  const dur = (route && route.routes && route.routes[0]) ? route.routes[0].duration : null;\n  if (hasGeo && dur && dur > 30) {\n    etaSeconds = Math.round(dur);\n    etaSource = 'live-osrm';\n  }\n} catch (e) {}\n\nif (etaSeconds === null) {\n  etaSeconds = (parsed.spokenEtaMinutes || 20) * 60;\n}\n\nconst catalog = [\n  {id:'a1',title:'Woh Lamhe (style)',artist:'Atif Aslam',dur:258},\n  {id:'a2',title:'Tera Hone Laga Hoon (style)',artist:'Atif Aslam',dur:302},\n  {id:'a3',title:'Jeene Laga Hoon (style)',artist:'Atif Aslam',dur:265},\n  {id:'a4',title:'Pehli Nazar Mein (style)',artist:'Atif Aslam',dur:280},\n  {id:'a5',title:'Doorie (style)',artist:'Atif Aslam',dur:260},\n  {id:'s1',title:'Kal Ho Naa Ho (style)',artist:'Sonu Nigam',dur:330},\n  {id:'s2',title:'Sandese Aate Hain (style)',artist:'Sonu Nigam',dur:345},\n  {id:'s3',title:'Abhi Mujh Mein Kahin (style)',artist:'Sonu Nigam',dur:288},\n  {id:'s4',title:'Suraj Hua Maddham (style)',artist:'Sonu Nigam',dur:320},\n  {id:'s5',title:'Main Yahaan Hoon (style)',artist:'Sonu Nigam',dur:290},\n  {id:'g1',title:'Skyline Drive',artist:'Neon Circuit',dur:198},\n  {id:'g2',title:'First Light',artist:'Aurora Kade',dur:210}\n];\n\nconst artists = (parsed.artists && parsed.artists.length > 0) ? parsed.artists : [];\nlet pool;\nif (artists.length > 0) {\n  const lowered = artists.map(function(a){ return a.toLowerCase(); });\n  pool = catalog.filter(function(t) {\n    const artistLower = t.artist.toLowerCase();\n    for (let i = 0; i < lowered.length; i++) { if (artistLower.indexOf(lowered[i]) !== -1) return true; }\n    return false;\n  });\n  const byArtist = {};\n  pool.forEach(function(t) {\n    if (!byArtist[t.artist]) byArtist[t.artist] = [];\n    byArtist[t.artist].push(t);\n  });\n  const artistNames = Object.keys(byArtist);\n  const interleaved = [];\n  let i = 0;\n  let more = true;\n  while (more) {\n    more = false;\n    for (let a = 0; a < artistNames.length; a++) {\n      const list = byArtist[artistNames[a]];\n      if (list[i]) { interleaved.push(list[i]); more = true; }\n    }\n    i++;\n  }\n  pool = interleaved;\n} else {\n  pool = catalog.slice(0, 6);\n}\n\nconst budget = Math.max(0, etaSeconds - 20);\nlet queue = [];\nlet elapsed = 0;\nconst recent = [];\nfor (let idx = 0; idx < pool.length; idx++) {\n  const track = pool[idx];\n  if (elapsed + track.dur > budget) continue;\n  if (recent.length > 0 && recent[recent.length - 1] === track.artist) continue;\n  queue.push(track);\n  recent.push(track.artist);\n  elapsed += track.dur;\n  if (budget - elapsed < 30) break;\n}\n\nconst remaining = etaSeconds - elapsed;\nconst used = {};\nqueue.forEach(function(t){ used[t.id] = true; });\nconst leftover = pool.filter(function(t){ return !used[t.id]; });\nlet cleanCut = null;\nif (remaining > 5 && leftover.length > 0) {\n  const fit = leftover.filter(function(t){ return t.dur <= remaining; })[0];\n  if (fit) {\n    queue.push(fit);\n    elapsed += fit.dur;\n    cleanCut = { trackId: fit.id, fullDurationSec: fit.dur, playSeconds: fit.dur, trimmed: false, boundaryType: 'natural-end' };\n  } else {\n    const next = leftover[0];\n    const playSeconds = Math.max(10, Math.min(next.dur, remaining));\n    queue.push(next);\n    elapsed += playSeconds;\n    cleanCut = { trackId: next.id, fullDurationSec: next.dur, playSeconds: playSeconds, trimmed: true, boundaryType: 'faded-outro' };\n  }\n}\n\nconst minutes = Math.round(etaSeconds / 60);\nconst artistList = artists.length > 0 ? artists.join(' and ') : 'your top picks';\nconst confirmationText = parsed.destination\n  ? 'Got it - playing ' + artistList + ', wrapping up right as you arrive in about ' + minutes + ' minutes.'\n  : 'Got it - playing ' + artistList + '.';\n\nconst formattedQueue = queue.map(function(t) {\n  return { id: t.id, title: t.title, artist: t.artist, durationSec: t.dur, source: 'n8n-mock' };\n});\n\nreturn [{\n  json: {\n    parsed: parsed,\n    route: { etaMinutes: minutes, etaSeconds: etaSeconds, source: etaSource },\n    queue: {\n      queue: formattedQueue,\n      totalDurationSec: elapsed,\n      capped: true,\n      etaSeconds: etaSeconds,\n      cleanCut: cleanCut\n    },\n    confirmationText: confirmationText\n  }\n}];"
+      },
+      "id": "node-build-queue",
+      "name": "Build Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 0]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "node-respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 0]
+    }
+  ],
+  "connections": {
+    "Webhook - Assistant": { "main": [[ { "node": "Parse", "type": "main", "index": 0 } ]] },
+    "Parse": { "main": [[ { "node": "Geocode Destination", "type": "main", "index": 0 } ]] },
+    "Geocode Destination": { "main": [[ { "node": "Get Route", "type": "main", "index": 0 } ]] },
+    "Get Route": { "main": [[ { "node": "Build Queue", "type": "main", "index": 0 } ]] },
+    "Build Queue": { "main": [[ { "node": "Respond to Webhook", "type": "main", "index": 0 } ]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "pinData": {}
+}
