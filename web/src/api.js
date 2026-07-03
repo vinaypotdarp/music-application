@@ -56,3 +56,11 @@ export function postVibe(payload) {
     body: JSON.stringify(payload),
   });
 }
+
+export function postBrainChat(payload) {
+  return jsonFetch(`${BASE}/brain/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}

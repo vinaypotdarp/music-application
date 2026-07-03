@@ -9,7 +9,7 @@ const router = Router();
 // proper intent/entity model (see spec 3.1), but this covers the exact
 // pattern from the brief: "I'm going to X, Maps shows a N-minute drive,
 // play songs by A and B."
-function parseCommand(transcript) {
+export function parseCommand(transcript) {
   const text = transcript.trim();
 
   const destMatch = /going to ([^,.]+)/i.exec(text);
@@ -34,7 +34,7 @@ function parseCommand(transcript) {
 // Round-robin merge of per-artist track lists, e.g. [[a1,a2,a3],[b1,b2]]
 // -> [a1,b1,a2,b2,a3]. Keeps the queue builder's no-repeat-artist window
 // from starving out an artist whose tracks would otherwise be bunched.
-function interleave(lists) {
+export function interleave(lists) {
   const merged = [];
   const maxLen = Math.max(0, ...lists.map((l) => l.length));
   for (let i = 0; i < maxLen; i++) {

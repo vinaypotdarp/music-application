@@ -6,6 +6,7 @@ import ScenarioSimulator from "./ScenarioSimulator.jsx";
 import NowPlaying from "./NowPlaying.jsx";
 import VoiceAssistant from "./VoiceAssistant.jsx";
 import VibePicker from "./VibePicker.jsx";
+import AIChat from "./AIChat.jsx";
 
 const USER_ID = "demo-user";
 
@@ -69,16 +70,6 @@ export default function AITab() {
     }));
   }
 
-  // Primary flow: nothing picked yet -> full-size weather+vibe picker only.
-  if (!result) {
-    return (
-      <div className="ai-tab">
-        {error && <div className="error-banner">{error}</div>}
-        <VibePicker userId={USER_ID} onResult={setResult} />
-      </div>
-    );
-  }
-
   return (
     <div className="ai-tab">
       <div className="ai-tab__status">
@@ -90,28 +81,32 @@ export default function AITab() {
             <span className={`badge ${health.youtubeKeyConfigured ? "badge--live" : "badge--mock"}`}>
               YouTube: {health.youtubeKeyConfigured ? "live" : "mock"}
             </span>
+            <span className={`badge ${health.geminiKeyConfigured ? "badge--live" : "badge--mock"}`}>
+              Brain: {health.geminiKeyConfigured ? "gemini" : "rule-based"}
+            </span>
           </>
         )}
-        <button className="ai-tab__new-vibe" onClick={() => setResult(null)}>
-          🔄 Pick a different vibe
-        </button>
       </div>
 
-      <ContextStrip context={result?.context} />
-
-      {result?.patternHint && <div className="pattern-hint">🧠 {result.patternHint}</div>}
-
-      <ScenarioCard scenario={result?.scenario} />
-
       {error && <div className="error-banner">{error}</div>}
-      {loading && <div className="loading-banner">Fetching context and building your queue…</div>}
 
-      <NowPlaying queueResult={result?.queue} />
+      {/* Primary flow: a real chat with the generative brain, not a fixed picker. */}
+      <AIChat userId={USER_ID} onResult={setResult} geminiConfigured={Boolean(health?.geminiKeyConfigured)} />
 
-      <VoiceAssistant onQueueReady={applyAssistantQueue} />
+      {result && (
+        <>
+          <ContextStrip context={result?.context} />
+          {result?.patternHint && <div className="pattern-hint">🧠 {result.patternHint}</div>}
+          <ScenarioCard scenario={result?.scenario} />
+          {loading && <div className="loading-banner">Fetching context and building your queue…</div>}
+          <NowPlaying queueResult={result?.queue} />
+        </>
+      )}
 
       <details className="advanced-section">
-        <summary>Advanced: Scenario Simulator (uses Maps/Weather APIs)</summary>
+        <summary>Advanced: manual picker &amp; legacy tools (rule-based, no chat)</summary>
+        <VibePicker userId={USER_ID} onResult={setResult} compact />
+        <VoiceAssistant onQueueReady={applyAssistantQueue} />
         <ScenarioSimulator scenarios={scenarios} onRun={runScenario} onLiveMode={runLiveMode} loading={loading} />
       </details>
     </div>

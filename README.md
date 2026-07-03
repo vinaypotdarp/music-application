@@ -22,6 +22,7 @@ mock data so you can try it immediately:
 | Weather | Simulated per scenario | Real Google Weather API |
 | Song search & metadata | Small built-in mock catalog | Real YouTube Data API v3 search |
 | Actual audio playback | Simulated progress bar (no audio file) | Real YouTube video embed |
+| AI Brain chat (mood/artist/destination understanding) | Regex + if/else rules (`scenarioEngine.js`, `parseCommand()`) | Real Gemini model call (`geminiService.js`), same UI either way — see `docs/` note below |
 
 Even with all keys configured, "queue trimming"/seek control only works for
 the simulated tracks in this prototype, because the YouTube IFrame player
@@ -29,25 +30,34 @@ doesn't expose the kind of fine-grained structural (chorus/verse) data the
 spec's Clean-Cut algorithm assumes — see `docs/YouTube_Music_AI_Mode_Spec.md`
 Section 1.4 for the full explanation.
 
-## Default flow: weather + vibe picker
+## Default flow: chat with the AI Brain
 
-The app now opens straight to a simple picker — "What's the weather? What's
-your vibe?" — instead of requiring a destination/Maps context first. This is
-deliberately the **simplest possible version for now**: no location, no
-Maps/Weather API calls, just two manual choices that map straight to a mood
-and a queue (`server/src/routes/vibe.js`).
+The app opens straight into a chat (`web/src/components/AIChat.jsx` →
+`POST /api/brain/chat`, handled by `server/src/routes/brain.js`). You type or
+speak naturally — "rainy evening, feeling nostalgic", "heading to Raj's
+place, play Atif Aslam", "surprise me" — and a real Gemini model
+(`server/src/services/geminiService.js`) decides the mood, BPM range,
+artists, and destination from the conversation, then the existing
+queue-building pipeline (mood tags → catalog/YouTube search → time-capped
+queue) runs exactly as before.
+
+If `GEMINI_API_KEY` isn't set, or the Gemini call fails for any reason
+(quota, network, bad output), `brain.js` **silently falls back** to the
+original rule-based logic — the same regex `parseCommand()` and if/else
+`scenarioEngine.js` this project started with — so the chat never breaks.
+Every reply says which path answered (visible as a small "rule-based
+fallback" tag in the chat), same transparency principle as the existing
+live-vs-mock badges for Maps/YouTube.
 
 Every pick is logged per user (`server/src/services/preferenceTracker.js`,
-persisted to `server/data/vibe-log.json`) — not used for anything fancy yet,
-but it's the groundwork for real personalization later: once there's enough
-history, `getPatternHint()` already surfaces a simple rule-based observation
-("you usually pick Chill on rainy days") back in the UI. Swapping that
-rule-based hint for an actual model later only requires changing what
-`getPatternHint()` returns — the logging and the UI hook are already wired.
+persisted to `server/data/vibe-log.json`) and fed back into the system
+prompt as history context, so the model can reference your patterns
+("you've leaned Chill on rainy evenings before") directly in conversation.
 
-The original Maps/Weather-driven Scenario Simulator and Live mode still
-exist — they're now tucked under "Advanced: Scenario Simulator" below the
-main result view, once you've picked a vibe at least once.
+The original weather+vibe picker, Maps/Weather-driven Scenario Simulator,
+Live mode, and the old regex-only voice assistant still exist — they're now
+tucked under "Advanced: manual picker & legacy tools" below the chat, for
+testing or if you want the deterministic zero-model path.
 
 ## Project structure
 

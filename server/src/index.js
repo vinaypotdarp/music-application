@@ -6,6 +6,7 @@ import contextRouter from "./routes/context.js";
 import assistantRouter from "./routes/assistant.js";
 import behaviorRouter from "./routes/behavior.js";
 import vibeRouter from "./routes/vibe.js";
+import brainRouter from "./routes/brain.js";
 import { DEMO_SCENARIOS } from "./data/mockData.js";
 
 dotenv.config();
@@ -19,6 +20,7 @@ app.get("/api/health", (req, res) => {
     ok: true,
     mapsKeyConfigured: Boolean(process.env.GOOGLE_MAPS_API_KEY),
     youtubeKeyConfigured: Boolean(process.env.YOUTUBE_API_KEY),
+    geminiKeyConfigured: Boolean(process.env.GEMINI_API_KEY),
     forceMock: String(process.env.FORCE_MOCK).toLowerCase() === "true",
   });
 });
@@ -31,6 +33,7 @@ app.use("/api/context", contextRouter);
 app.use("/api/assistant", assistantRouter);
 app.use("/api/behavior", behaviorRouter);
 app.use("/api/vibe", vibeRouter);
+app.use("/api/brain", brainRouter);
 
 const port = process.env.PORT || 8787;
 
@@ -49,6 +52,11 @@ if (!process.env.VERCEL) {
       process.env.YOUTUBE_API_KEY
         ? "YouTube Data API: LIVE key detected"
         : "YouTube Data API: no key found — using mock catalog"
+    );
+    console.log(
+      process.env.GEMINI_API_KEY
+        ? "Gemini (AI Brain): LIVE key detected"
+        : "Gemini (AI Brain): no key found — chat runs in rule-based fallback mode"
     );
   });
 }

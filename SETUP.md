@@ -56,7 +56,25 @@ requesting a quota increase from Google.
 
 ---
 
-## 3. Verify it worked
+## 3. Gemini API key (the actual AI Brain chat)
+
+**Covers:** the conversational `/api/brain/chat` endpoint — this is the one
+part of the app that runs a real generative model instead of rule-based
+if/else logic. No billing account required, unlike Maps Platform.
+
+1. Go to **aistudio.google.com/apikey** and sign in with any Google account.
+2. Click **Create API key** → choose a Google Cloud project (or let it
+   create one) → copy the key.
+3. Paste it into `server/.env` as `GEMINI_API_KEY=...`
+
+**Free tier:** generous free daily quota on `gemini-3.5-flash`, no card
+needed. Without this key, `/api/brain/chat` still works end-to-end — it just
+answers using the older regex + scenario-rules logic instead of the model,
+and says so in its replies.
+
+---
+
+## 4. Verify it worked
 
 ```bash
 cd server
@@ -65,9 +83,9 @@ npm run dev
 ```
 
 Visit `http://localhost:8787/api/health` — you should see
-`"mapsKeyConfigured": true` and `"youtubeKeyConfigured": true`. In the web
-app, the status badges next to the AI Tab will switch from amber ("mock") to
-green ("live").
+`"mapsKeyConfigured": true`, `"youtubeKeyConfigured": true`, and
+`"geminiKeyConfigured": true`. In the web app, the status badges next to the
+AI Tab will switch from amber ("mock"/"rule-based") to green ("live"/"gemini").
 
 If a key is misconfigured or a call fails for any reason, the backend
 automatically falls back to mock data rather than crashing — check the
